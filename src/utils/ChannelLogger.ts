@@ -1,0 +1,152 @@
+import {
+  Client,
+  CommandInteraction,
+  Message,
+  MessageActionRow,
+  MessageButton,
+  MessageEmbed,
+  TextChannel,
+} from "discord.js"
+import { ALERT_CHANNEL_ID, LOG_CHANNEL_ID, GUILD_ID } from "env"
+import { APIError, BotBaseError } from "errors"
+import { logger } from "logger"
+
+export class ChannelLogger {
+  logChannel: TextChannel | null = null
+  private alertChannel: TextChannel | null = null
+
+  ready(client: Client) {
+    try {
+      const guild = client.guilds.cache.get(GUILD_ID)
+      if (guild) {
+        this.alertChannel = guild.channels.cache.get(
+          ALERT_CHANNEL_ID
+        ) as TextChannel
+        this.logChannel = guild.channels.cache.get(
+          LOG_CHANNEL_ID
+        ) as TextChannel
+      }
+    } catch (e: any) {
+      logger.error(e)
+    }
+  }
+
+  log(error: BotBaseError, funcName?: string) {
+    if (this.logChannel) {
+      if (funcName) {
+        const embed = new MessageEmbed()
+          .setTimestamp()
+          .setDescription(
+            `\`\`\`bot crashed due to reason: ${funcName} ${error}\`\`\``
+          )
+        this.logChannel.send({
+          embeds: [embed],
+        })
+      } else {
+        const embed = new MessageEmbed()
+          .setTimestamp()
+          .setDescription(`\`\`\`bot crashed due to reason: ${error}\`\`\``)
+        this.logChannel.send({
+          embeds: [embed],
+        })
+      }
+    }
+  }
+
+  async alertSlash(
+    commandInteraction: CommandInteraction,
+    error: BotBaseError
+  ) {
+    if (!this.alertChannel) {
+      return {}
+    }
+
+    const isDM = !!commandInteraction.guildId
+    const channelName = (commandInteraction.channel as TextChannel).name
+
+    const description = `**Slash Command:** \`${
+      commandInteraction.commandName
+    }\`\n**Guild:** \`${
+      isDM ? "DM" : commandInteraction.guild?.name
+    }\`\n**Channel:** \`${isDM ? "DM" : channelName}\`\n**Error:** ${
+      error?.message
+        ? `\`\`\`${error.message}\`\`\``
+        : "Error without message, this is likely an unexpected error"
+    }`
+    const embed = new MessageEmbed({
+      title: error.name || "Slash Command error",
+      description,
+    }).setTimestamp()
+    return this.alertChannel.send({
+      embeds: [embed],
+    })
+  }
+
+  async alert<T extends BotBaseError>(msg: Message, error: T) {
+    if (!this.alertChannel) {
+      return {}
+    }
+
+    let description = `**Command:** \`${msg.content}\`\n**Guild:** \`${
+      msg.channel.type === "DM" ? "DM" : msg.guild?.name
+    }\`\n**Channel:** \`${
+      msg.channel.type === "DM" ? "DM" : msg.channel.name ?? msg.channelId
+    }\`\n**Error:** ${
+      error?.message
+        ? `\`\`\`${error.message}\`\`\``
+        : "Error without message, this is likely an unexpected error"
+    }`
+    if (error instanceof APIError) {
+      description = `${description}\n**Curl:**\n\`\`\`${error.curl}\`\`\``
+    }
+    const embed = new MessageEmbed({
+      title: error.name || "Command error",
+      description,
+      footer: {
+        text: msg?.author?.tag ?? "Unknown User",
+        iconURL: msg?.author?.avatarURL() ?? undefined,
+      },
+    }).setTimestamp()
+    return this.alertChannel.send({
+      embeds: [embed],
+      components: [
+        new MessageActionRow().addComponents(
+          new MessageButton()
+            .setStyle("LINK")
+            .setURL(msg.url)
+            .setLabel("Jump to message")
+        ),
+      ],
+    })
+  }
+
+  async alertWebhook(event: string, error: APIError) {
+    if (!this.alertChannel) {
+      return {}
+    }
+    return this.alertChannel?.send({
+      embeds: [
+        new MessageEmbed({
+          title: "Webhook Error",
+          description: `**Event:** \`${event}\`\n**Message:**\`\`\`${error.message}\`\`\`\n**Curl:**\`\`\`${error.curl}\`\`\``,
+        }).setTimestamp(),
+      ],
+    })
+  }
+
+  async alertStackTrace(stack: string) {
+    if (!this.alertChannel) {
+      return {}
+    }
+    return this.alertChannel?.send({
+      embeds: [
+        new MessageEmbed({
+          title: "Internal Error",
+          description: `**Trace:** \`\`\`${stack}\`\`\``,
+        }).setTimestamp(),
+      ],
+    })
+  }
+}
+
+export default new ChannelLogger()
